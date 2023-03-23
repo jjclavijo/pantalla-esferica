@@ -2,7 +2,6 @@ import numpy as np
 import open3d as o3d
 import open3d.visualization.gui as gui
 
-
 def crear_esfera():
     """
     Crear una esfera pintada
@@ -40,8 +39,11 @@ def crear_esfera():
 geometrias = []
 windows = []
 look_at_list = []
+vertical_orientation_list = []
 widgets = []
 scenes = []
+camera_angle_list = []
+move_angle = 1 * np.pi / 180
 
 # ----------------------
 # Hasta acá los Globals
@@ -92,21 +94,60 @@ def agregar_camara(posicion,nombre=''):
     widgets.append(scene_widget)
     scenes.append(scene)
     look_at_list.append(posicion)
+    vertical_orientation_list.append(np.array([0.,0.,1.]))
+    camera_angle_list.append(60)
 
     return 0
 
+from scipy.spatial.transform import Rotation as R
 
-def rotm(degree):
+def rotate_about_origin_horizontal(degree,point):
     """
-    un helper para crear una matriz de rotación alrededor del eje Z
+    Un helper para rotar alrededor del eje Z
+
+    Probablemente esto tenga que convertirse usando R.from_euler
+    o R.from_vec. Hay que ver si hay que rotar alrededor del eje z o alrededor
+    de la vertical de la cámara.
     """
-    return np.array(
+    M = np.array(
         [
             [np.cos(degree), -np.sin(degree), 0],
             [np.sin(degree), np.cos(degree), 0],
             [0, 0, 1],
         ]
     )
+
+    return point @ M
+
+def rotate_about_origin_vertical(degree,point):
+    """
+    un helper para crear una matriz de rotación "hacia arriba" o "hacia abajo"
+
+    Nótese que esta aproximación funciona mal muy cerca de los polos, pero
+    puede que no pueda ser necesario.
+
+    También podría convertirse usando R.from_vec. Hay que ver si el vector
+    alrededor del que hay que rotar es el producto cruz entre la visual y la
+    vertical.
+    """
+
+    point = np.array(point)
+
+    up_dir = np.cross(np.cross([0,0,1],point),point)
+    up_dir = np.sign(up_dir[-1]) * up_dir / np.linalg.norm(up_dir)
+
+    scale = np.linalg.norm(point)
+
+    offset = np.tan(degree)*scale
+
+    new_point = point + up_dir * offset
+
+    new_scale = np.linalg.norm(new_point)
+
+    new_point = new_point * scale / new_scale
+
+    return new_point
+
 
 def get_on_key(index):
     """
@@ -124,42 +165,162 @@ def get_on_key(index):
 
         # Cargar los globals, a los que vamos a acceder por índice.
         global look_at_list
+        global vertical_orientation_list
         global widgets
+        global move_angle
 
+        # Shift permite movimientos mas largos o más cortos
+        # La variable es move_angle y está en radianes.
+        # Para el ángulo de visual de la cámara se la convierte a grados.
+        # Para alejar/acercar la cámara se convertirá a 10cm / 1cm
+        if e.key == gui.KeyName.LEFT_SHIFT:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                move_angle = 1 * np.pi / 180
+            if e.type == gui.KeyEvent.DOWN:  # check UP so we default to DOWN
+                move_angle = 0.1 * np.pi / 180
+
+        # Control permite movimientos mas largos o más cortos
+        # La variable es move_angle y está en radianes.
+        # Para el ángulo de visual de la cámara se la convierte a grados.
+        # Para alejar/acercar la cámara se convertirá a 10cm / 1m
+        if e.key == gui.KeyName.LEFT_CONTROL:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                move_angle = 1 * np.pi / 180
+            if e.type == gui.KeyEvent.DOWN:  # check UP so we default to DOWN
+                move_angle = 10 * np.pi / 180
+
+        # L gira la vista hacia la derecha
         if e.key == gui.KeyName.L:
             if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
                 # Rotar en un sentido.
-                R = rotm(1 * np.pi / 180)
-                look_at_list[index] = look_at_list[index] @ R
+                original = look_at_list[index]
+                rotado = rotate_about_origin_horizontal(move_angle,
+                                                         original)
+                look_at_list[index] = rotado
 
                 # Actualizar la cámara.
-                widgets[index].look_at((0, 0, 0), look_at_list[index],  (0, 0, 1))
+                widgets[index].look_at((0, 0, 0), look_at_list[index],
+                                       vertical_orientation_list[index])
             return gui.Widget.EventCallbackResult.HANDLED
 
+        # H gira la vista hacia la izquierda
         if e.key == gui.KeyName.H:
             if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
                 # Rotar en el otro sentido.
-                R = rotm(-1 * np.pi / 180)
-                look_at_list[index] = look_at_list[index] @ R
+                original = look_at_list[index]
+                rotado = rotate_about_origin_horizontal(-move_angle,
+                                                         original)
+                look_at_list[index] = rotado
 
                 # Actualizar la cámara.
-                widgets[index].look_at( (0, 0, 0),look_at_list[index], (0, 0, 1))
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
             return gui.Widget.EventCallbackResult.HANDLED
 
+        # J gira la vista hacia la arriba
         if e.key == gui.KeyName.J:
             if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
-                # Alejar la cámara
-                lookat = np.array(look_at_list[index])
-                look_at_list[index] = lookat + 0.5* lookat/np.sum(lookat**2)**0.5
-                widgets[index].look_at( (0, 0, 0),look_at_list[index], (0, 0, 1))
+                # Rotar en un sentido.
+                original = look_at_list[index]
+                rotado = rotate_about_origin_vertical(move_angle,
+                                                         original)
+                look_at_list[index] = rotado
+
+                # Actualizar la cámara.
+                widgets[index].look_at((0, 0, 0), look_at_list[index],
+                                       vertical_orientation_list[index])
             return gui.Widget.EventCallbackResult.HANDLED
 
+        # K gira la vista hacia la abajo
         if e.key == gui.KeyName.K:
             if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
-                # Acercar la cámara
+                # Rotar en el otro sentido.
+                original = look_at_list[index]
+                rotado = rotate_about_origin_vertical(-move_angle,
+                                                         original)
+                look_at_list[index] = rotado
+
+                # Actualizar la cámara.
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # T gira la vista alrededor de la visual, en sentido horario
+        if e.key == gui.KeyName.T:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                # Rotar en un sentido.
+                axis = np.array(look_at_list[index],dtype=float)
+                axis /= np.linalg.norm(axis)
+                rot = R.from_rotvec(move_angle * axis)
+
+                vo = vertical_orientation_list[index]
+
+                vertical_orientation_list[index] = rot.apply(vo)
+
+                # Actualizar la cámara.
+                widgets[index].look_at((0, 0, 0), look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # G gira la vista alrededor de la visual, en sentido anti-horario
+        if e.key == gui.KeyName.G:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                # Rotar en el otro sentido.
+                axis = np.array(look_at_list[index],dtype=float)
+                axis /= np.linalg.norm(axis)
+                rot = R.from_rotvec(-move_angle * axis)
+
+                vo = vertical_orientation_list[index]
+
+                vertical_orientation_list[index] = rot.apply(vo)
+
+                # Actualizar la cámara.
+                widgets[index].look_at((0, 0, 0), look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # V Acerca la camara
+        if e.key == gui.KeyName.V:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                # Alejar la cámara
+                unit = move_angle * 18 / np.pi
                 lookat = np.array(look_at_list[index])
-                look_at_list[index] = lookat - 0.5 * lookat/np.sum(lookat**2)**0.5
-                widgets[index].look_at( (0, 0, 0),look_at_list[index], (0, 0, 1))
+                look_at_list[index] = lookat + unit * lookat / np.linalg.norm(lookat)
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # B Aleja la camara
+        if e.key == gui.KeyName.B:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                # Acercar la cámara
+                unit = move_angle * 18 / np.pi
+                lookat = np.array(look_at_list[index])
+                look_at_list[index] = lookat - unit * lookat / np.linalg.norm(lookat)
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # N Amplía el ángulo de la cámara
+        if e.key == gui.KeyName.N:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                ca = camera_angle_list[index] + move_angle * (180 / np.pi)
+                camera_angle_list[index] = ca
+
+                widgets[index].setup_camera(camera_angle_list[index], scenes[index].bounding_box, (0, 0, 0)) #???
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
+            return gui.Widget.EventCallbackResult.HANDLED
+
+        # M Reduce el ángulo de la cámara
+        if e.key == gui.KeyName.M:
+            if e.type == gui.KeyEvent.UP:  # check UP so we default to DOWN
+                ca = camera_angle_list[index] - move_angle * (180 / np.pi)
+                camera_angle_list[index] = ca
+
+                widgets[index].setup_camera(camera_angle_list[index], scenes[index].bounding_box, (0, 0, 0)) #???
+                widgets[index].look_at( (0, 0, 0),look_at_list[index],
+                                       vertical_orientation_list[index])
             return gui.Widget.EventCallbackResult.HANDLED
 
         return gui.Widget.EventCallbackResult.IGNORED
